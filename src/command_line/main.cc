@@ -44,6 +44,7 @@ int main(int argc, char** argv) {
 
   // Verify parameters.
   if (argc != 5) {
+    std::cerr << "Incorrect number of parameters:" << argc << std::endl;
     std::cerr << "Incorrect number of parameters. Sample usage: ./ted apted string {x{a}} {x{b}}" << std::endl;
     std::cerr << "Usage: ./ted <algorithm> <input-format> <input1> <input2>" << std::endl;
     return -1;
