@@ -25,43 +25,60 @@
 #include "unit_cost_model.h"
 #include "bracket_notation_parser.h"
 #include "apted_tree_index.h"
+#include "quickjedi_index.h"
+
+using Label = label::StringLabel;
+using CostModelLD = cost_model::UnitCostModelLD<Label>;
+using LabelDictionary = label::LabelDictionary<Label>;
+
+int evaluate_apted(std::string, std::string);
 
 /// Simple command-line tool for executing Tree Edit Distance.
 int main(int argc, char** argv) {
 
-    using Label = label::StringLabel;
-    using CostModelLD = cost_model::UnitCostModelLD<Label>;
-    using LabelDictionary = label::LabelDictionary<Label>;
-
   // Verify parameters.
-  if (argc != 4) {
-    std::cerr << "Incorrect number of parameters. Sample usage: ./ted string {x{a}} {x{b}}" << std::endl;
+  if (argc != 5) {
+    std::cerr << "Incorrect number of parameters. Sample usage: ./ted apted string {x{a}} {x{b}}" << std::endl;
+    std::cerr << "Usage: ./ted <algorithm> <input-format> <input1> <input2>" << std::endl;
     return -1;
   }
 
   std::string source_tree_string;
   std::string dest_tree_string;
 
-    parser::BracketNotationParser<Label> bnp;
-    // Verify the input format before parsing.
-
-  if (std::strcmp(argv[1], "string") == 0) {
-    source_tree_string = argv[2];
-    dest_tree_string = argv[3];
-  } else if (std::strcmp(argv[1], "file") == 0) {
-    std::ifstream tree_file(argv[2]);
-    std::getline(tree_file, source_tree_string);
+  
+  // Verify the input format before parsing.
+  if (std::strcmp(argv[2], "string") == 0) {
+    source_tree_string = argv[3];
+    dest_tree_string = argv[4];
+  } else if (std::strcmp(argv[2], "file") == 0) {
+    std::ifstream tree_file(argv[3]);
+    source_tree_string.assign((std::istreambuf_iterator<char>(tree_file)),
+                              std::istreambuf_iterator<char>());
     tree_file.close();
 
-        tree_file = std::ifstream(argv[3]);
-        std::getline(tree_file, dest_tree_string);
-        tree_file.close();
-    }
-    else {
-        std::cerr << "Incorrect input format. Use either string or file." << std::endl;
-        return -1;
-    }
+    tree_file = std::ifstream(argv[4]);
+    dest_tree_string.assign((std::istreambuf_iterator<char>(tree_file)),
+                            std::istreambuf_iterator<char>());
+    tree_file.close();
+  }
+  else {
+      std::cerr << "Incorrect input format. Use either string or file." << std::endl;
+      return -1;
+  }
 
+  if (std::strcmp(argv[1], "apted") == 0) {
+      return evaluate_apted(source_tree_string, dest_tree_string);
+  } else {
+      std::cerr << "Incorrect algorithm name. Use apted." << std::endl;
+      return -1;
+  }
+
+  return 0;
+}
+
+int evaluate_apted(std::string source_tree_string, std::string dest_tree_string) {
+    parser::BracketNotationParser<Label> bnp;
     if (!bnp.validate_input(source_tree_string)) {
         std::cerr << "Incorrect format of source tree. Is the number of opening and closing brackets equal?" << std::endl;
         return -1;
@@ -86,5 +103,4 @@ int main(int argc, char** argv) {
   node::index_tree(ti2, destination_tree, ld, ucm);
   std::cout << "Distance TED:" << apted_algorithm.ted(ti1, ti2) << std::endl;
 
-    return 0;
 }
