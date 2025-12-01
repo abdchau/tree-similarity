@@ -288,6 +288,247 @@ double QuickJEDITreeIndex<CostModel, TreeIndex>::jedi_k(
   return jedi(t1, t2);
 }
 
+template <typename CostModel, typename TreeIndex>
+typename QuickJEDITreeIndex<CostModel, TreeIndex>::BoundsResult 
+QuickJEDITreeIndex<CostModel, TreeIndex>::compute_bounds(
+    const TreeIndex& t1, const TreeIndex& t2) {
+  
+  int t1_input_size = t1.tree_size_;
+  int t2_input_size = t2.tree_size_;
+  int larger_tree_size = std::max(t1_input_size, t2_input_size);
+  
+  // Initialise distance matrices.
+  dt_ = data_structures::Matrix<double>(t1_input_size+1, t2_input_size+1);
+  df_ = data_structures::Matrix<double>(t1_input_size+1, t2_input_size+1);
+  e_ = data_structures::Matrix<double>(t1_input_size+1, t2_input_size+1);
+  std::vector<std::vector<double> > hungarian_cm
+      (2*larger_tree_size, std::vector<double> (2*larger_tree_size, 0));
+  e_row_minima_.resize(2*larger_tree_size);
+  e_col_minima_.resize(2*larger_tree_size);
+  
+  // Fill the matrices with inf.
+  dt_.fill_with(std::numeric_limits<double>::infinity());
+  df_.fill_with(std::numeric_limits<double>::infinity());
+  e_.fill_with(std::numeric_limits<double>::infinity());
+
+  dt_.at(0, 0) = 0;
+  df_.at(0, 0) = 0;
+  // Deletion initialization.
+  for (int i = 1; i <= t1_input_size; ++i) {
+    df_.at(i, 0) = 0;
+    for (unsigned int k = 1; k <= t1.postl_to_children_[i-1].size(); ++k) {
+      df_.at(i, 0) += dt_.at(t1.postl_to_children_[i-1][k-1] + 1, 0);
+    }
+    dt_.at(i, 0) = df_.at(i, 0) + c_.del(t1.postl_to_label_id_[i - 1]);
+  }
+  // Insertion initialization.
+  for (int j = 1; j <= t2_input_size; ++j) {
+    df_.at(0, j) = 0;
+    for (unsigned int k = 1; k <= t2.postl_to_children_[j-1].size(); ++k) {
+      df_.at(0, j) += dt_.at(0, t2.postl_to_children_[j-1][k-1] + 1);
+    }
+    dt_.at(0, j) = df_.at(0, j) + c_.ins(t2.postl_to_label_id_[j - 1]);
+  }
+
+  double min_for_ins = std::numeric_limits<double>::infinity();
+  double min_tree_ins = std::numeric_limits<double>::infinity();
+  double min_for_del = std::numeric_limits<double>::infinity();
+  double min_tree_del = std::numeric_limits<double>::infinity();
+  double min_for_ren = std::numeric_limits<double>::infinity();
+  double min_tree_ren = std::numeric_limits<double>::infinity();
+  unsigned long row_lb = 0;
+  unsigned long col_lb = 0;
+  double for_int_del_ub;
+  double ed_lb;
+  unsigned long matrix_size;
+
+  // Variables to store bounds at root level
+  double root_upper_bound = std::numeric_limits<double>::infinity();
+  double root_lower_bound = 0.0;
+  double root_hungarian_row_lb = 0.0;
+  double root_hungarian_col_lb = 0.0;
+
+  for (int i = 1; i <= t1_input_size; ++i) {
+    for (int j = 1; j <= t2_input_size; ++j) {
+      
+      // Cost for deletion in forest.
+      min_for_del = std::numeric_limits<double>::infinity();
+      min_tree_del = std::numeric_limits<double>::infinity();
+      for (unsigned int t = 1; t <= t2.postl_to_children_[j-1].size(); ++t) {
+        min_for_del = std::min(min_for_del,
+            (df_.at(i, t2.postl_to_children_[j-1][t-1] + 1) - 
+             df_.at(0, t2.postl_to_children_[j-1][t-1] + 1)));
+        min_tree_del = std::min(min_tree_del,
+            (dt_.at(i, t2.postl_to_children_[j-1][t-1] + 1) - 
+             dt_.at(0, t2.postl_to_children_[j-1][t-1] + 1)));
+      }
+      min_for_del += df_.at(0, j);
+      min_tree_del += dt_.at(0, j);
+
+      // Cost for insertion in forest.
+      min_for_ins = std::numeric_limits<double>::infinity();
+      min_tree_ins = std::numeric_limits<double>::infinity();
+      for (unsigned int s = 1; s <= t1.postl_to_children_[i-1].size(); ++s) {
+        min_for_ins = std::min(min_for_ins, 
+            (df_.at(t1.postl_to_children_[i-1][s-1] + 1, j) - 
+             df_.at(t1.postl_to_children_[i-1][s-1] + 1, 0)));
+        min_tree_ins = std::min(min_tree_ins, 
+            (dt_.at(t1.postl_to_children_[i-1][s-1] + 1, j) - 
+             dt_.at(t1.postl_to_children_[i-1][s-1] + 1, 0)));
+      }
+      min_for_ins += df_.at(i, 0);
+      min_tree_ins += dt_.at(i, 0);
+
+      // The minimum between insertion and deletion costs is an upper bound.
+      for_int_del_ub = std::min(min_for_del, min_for_ins);
+
+      // Cost for minimal mapping between trees in forest. Worst case is the 
+      // upper bound given by insertion and deletion.
+      min_for_ren = for_int_del_ub;
+      min_tree_ren = for_int_del_ub;
+      
+      // In case of two keys, take the costs of mapping their child to one another.
+      if ((t1.postl_to_type_[i - 1] == 2 && t2.postl_to_type_[j - 1] == 2) && 
+            t1.postl_to_children_[i-1].size() > 0 && 
+            t2.postl_to_children_[j-1].size() > 0) {
+        // Keys have exactly one child, therefore, [0] always works.
+        min_for_ren = dt_.at(t1.postl_to_children_[i-1][0] + 1, 
+            t2.postl_to_children_[j-1][0] + 1);
+      }
+      // Values are leaves, mapping there subforests has cost 0.
+      else if ((t1.postl_to_type_[i - 1] == 3 && t2.postl_to_type_[j - 1] == 3)) {
+        // Keys have exactly one child, therefore, [0] always works.
+        min_for_ren = 0;
+      } else {
+        // Compute the unmapped children edit size lower bound.
+        ed_lb = 0;
+        if (t1.postl_to_children_[i-1].size() > t2.postl_to_children_[j-1].size()) {
+          ed_lb = t1.postl_to_ordered_child_size_[i-1][t1.postl_to_children_[i-1].size() - t2.postl_to_children_[j-1].size() - 1];
+        }
+        else if (t1.postl_to_children_[i-1].size() < t2.postl_to_children_[j-1].size()) {
+          ed_lb = t2.postl_to_ordered_child_size_[j-1][t2.postl_to_children_[j-1].size() - t1.postl_to_children_[i-1].size() - 1];
+        }
+
+        // Compute the subtree size difference lower bound and take max lower 
+        // bound.
+        ed_lb = std::max(ed_lb, 1.0 * abs(int(t1.postl_to_size_[i - 1] - t2.postl_to_size_[j-1])));
+
+        // Store lower bound at root level to avoid recomputation
+        if (i == t1_input_size && j == t2_input_size) {
+          root_lower_bound = ed_lb;
+        }
+
+        if (for_int_del_ub > ed_lb) {
+          // If we compare two array nodes, we need to consider the order among 
+          // the children subtrees. Skip full edit distance computation, just use bound.
+          if (t1.postl_to_type_[i - 1] == 1 && t2.postl_to_type_[j - 1] == 1) {
+            // Skip full edit distance computation - just use the upper bound
+            min_for_ren = for_int_del_ub;
+          }
+          // If the nodes types are of type other than array, compute the 
+          // Hungarian Algorithm lower bounds but skip execution.
+          else {
+            // Build a cost matrix such that each subtree can be mapped to another 
+            // subtree or to an empty tree.
+            matrix_size = t1.postl_to_children_[i-1].size() + t2.postl_to_children_[j-1].size();
+
+            for (unsigned long x = 0; x < matrix_size; x++) {
+              e_row_minima_[x] = std::numeric_limits<double>::infinity();
+              e_col_minima_[x] = std::numeric_limits<double>::infinity();
+            }
+
+            // Sum up the row and column minima of the cost matrix of the Hungarian 
+            // Algorithm. Each provide a lower bound on the result of the bipartite 
+            // matching.
+            for (unsigned long s = 1; s <= matrix_size; ++s) {
+              for (unsigned long t = 1; t <= matrix_size; ++t) {
+                if (s <= t1.postl_to_children_[i-1].size()) {
+                  if (t <= t2.postl_to_children_[j-1].size()) {
+                    hungarian_cm[s-1][t-1] = dt_.at(
+                        t1.postl_to_children_[i-1][s-1] + 1, 
+                        t2.postl_to_children_[j-1][t-1] + 1);
+                  } else {
+                    hungarian_cm[s-1][t-1] = 
+                        t1.postl_to_size_[t1.postl_to_children_[i-1][s-1]];
+                  }
+                } else {
+                  if (t <= t2.postl_to_children_[j-1].size()) {
+                    hungarian_cm[s-1][t-1] = 
+                        t2.postl_to_size_[t2.postl_to_children_[j-1][t-1]];
+                  } else {
+                    hungarian_cm[s-1][t-1] = 0;
+                  }
+                }
+                e_row_minima_[s-1] = std::min(e_row_minima_[s-1], hungarian_cm[s-1][t-1]);
+                e_col_minima_[t-1] = std::min(e_col_minima_[t-1], hungarian_cm[s-1][t-1]);
+              }
+            }
+
+            // Compute lower bounds for rows and columns of the cost matrix of the 
+            // Hungarian Algorithm.
+            row_lb = 0;
+            col_lb = 0;
+            for (unsigned long x = 0; x < matrix_size; x++) {
+              row_lb += e_row_minima_[x];
+              col_lb += e_col_minima_[x];
+            }
+
+            // Skip Hungarian algorithm execution - just use the upper bound
+            // Store Hungarian bounds for root level
+            if (i == t1_input_size && j == t2_input_size) {
+              root_hungarian_row_lb = row_lb;
+              root_hungarian_col_lb = col_lb;
+            }
+            min_for_ren = for_int_del_ub;
+          }
+        } else {
+          // Lower bound exceeds upper bound, skip expensive operations
+          min_for_ren = for_int_del_ub;
+        }
+      }
+
+      // Compute minimal forest mapping costs.
+      df_.at(i, j) = min_for_del >= min_for_ins ? 
+          min_for_ins >= min_for_ren ? min_for_ren : min_for_ins : 
+          min_for_del >= min_for_ren ? min_for_ren : min_for_del;
+      // Compute rename costs for trees i and j.
+      // Consider the case that i is deleted and j is inserted.
+      if (t1.postl_to_type_[i - 1] != t2.postl_to_type_[j - 1]) {
+        min_tree_ren = df_.at(i, j) + c_.del(t1.postl_to_label_id_[i - 1]) + 
+            c_.ins(t2.postl_to_label_id_[j - 1]);
+      } else {
+        min_tree_ren = df_.at(i, j) + c_.ren(t1.postl_to_label_id_[i - 1], 
+            t2.postl_to_label_id_[j - 1]);
+      }
+      // Compute minimal tree mapping costs.
+      dt_.at(i, j) = min_tree_del >= min_tree_ins ? 
+          min_tree_ins >= min_tree_ren ? min_tree_ren : min_tree_ins : 
+          min_tree_del >= min_tree_ren ? min_tree_ren : min_tree_del;
+
+      // Store bounds at root level
+      if (i == t1_input_size && j == t2_input_size) {
+        root_upper_bound = for_int_del_ub;
+        // Note: root_lower_bound was already stored when ed_lb was computed above
+      }
+    }
+  }
+
+  // Create result struct
+  BoundsResult result;
+  result.upper_bound = root_upper_bound;
+  result.lower_bound = root_lower_bound;
+  result.hungarian_row_lb = root_hungarian_row_lb;
+  result.hungarian_col_lb = root_hungarian_col_lb;
+
+  // Print bounds to console
+  // std::cout << "Upper Bound (for_int_del_ub): " << result.upper_bound << std::endl;
+  // std::cout << "Lower Bound (ed_lb): " << result.lower_bound << std::endl;
+  // std::cout << "Hungarian Row Lower Bound: " << result.hungarian_row_lb << std::endl;
+  // std::cout << "Hungarian Column Lower Bound: " << result.hungarian_col_lb << std::endl;
+
+  return result;
+}
+
 template <typename cost_matrixModel, typename TreeIndex>
 void QuickJEDITreeIndex<cost_matrixModel, TreeIndex>::print_matrix(
     std::vector<std::vector<double> >& cost_matrix)

@@ -38,6 +38,7 @@ using JSONLabelDictionary = label::LabelDictionary<JSONLabel>;
 
 int evaluate_apted(std::string, std::string);
 int evaluate_quickjedi(std::string, std::string);
+int evaluate_bounds(std::string, std::string);
 
 /// Simple command-line tool for executing Tree Edit Distance.
 int main(int argc, char** argv) {
@@ -78,8 +79,10 @@ int main(int argc, char** argv) {
       return evaluate_apted(source_tree_string, dest_tree_string);
   } else if (std::strcmp(argv[1], "quickjedi") == 0) {
       return evaluate_quickjedi(source_tree_string, dest_tree_string);
+  } else if (std::strcmp(argv[1], "bounds") == 0) {
+      return evaluate_bounds(source_tree_string, dest_tree_string);
   } else {
-      std::cerr << "Incorrect algorithm name. Use apted." << std::endl;
+      std::cerr << "Incorrect algorithm name. Use apted, quickjedi, or bounds." << std::endl;
       return -1;
   }
 
@@ -141,4 +144,41 @@ int evaluate_apted(std::string source_tree_string, std::string dest_tree_string)
   node::index_tree(ti2, destination_tree, ld, ucm);
   std::cout << "Distance TED:" << apted_algorithm.ted(ti1, ti2) << std::endl;
 
+  return 0;
+}
+
+int evaluate_bounds(std::string source_tree_string, std::string dest_tree_string) {
+  parser::BracketNotationParser<JSONLabel> bnp;
+  if (!bnp.validate_input(source_tree_string)) {
+    std::cerr << "Incorrect format of source tree. Is the number of opening and closing brackets equal?" << std::endl;
+    return -1;
+  }
+  const node::Node<JSONLabel> source_tree = bnp.parse_single(source_tree_string);
+
+  if (!bnp.validate_input(dest_tree_string)) {
+    std::cerr << "Incorrect format of destination tree. Is the number of opening and closing brackets equal?" << std::endl;
+    return -1;
+  }
+  const node::Node<JSONLabel> destination_tree = bnp.parse_single(dest_tree_string);
+
+  std::cout << "Size of source tree:" << source_tree.get_tree_size() << std::endl;
+  std::cout << "Size of destination tree:" << destination_tree.get_tree_size() << std::endl;
+
+  JSONLabelDictionary ld;
+  JSONCostModelLD ucm(ld);
+  json::QuickJEDITreeIndex<JSONCostModelLD, node::TreeIndexJSON> jedi_algorithm(ucm);
+  node::TreeIndexJSON ti1;
+  node::TreeIndexJSON ti2;
+  node::index_tree(ti1, source_tree, ld, ucm);
+  node::index_tree(ti2, destination_tree, ld, ucm);
+  
+  std::cout << "\nComputing bounds for edit distance:" << std::endl;
+  auto bounds = jedi_algorithm.compute_bounds(ti1, ti2);
+  
+  std::cout << "  Upper Bound: " << bounds.upper_bound << std::endl;
+  std::cout << "  Lower Bound: " << bounds.lower_bound << std::endl;
+  std::cout << "  Hungarian Row Lower Bound: " << bounds.hungarian_row_lb << std::endl;
+  std::cout << "  Hungarian Column Lower Bound: " << bounds.hungarian_col_lb << std::endl;
+
+  return 0;
 }

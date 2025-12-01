@@ -60,6 +60,27 @@ public:
   /// leveraging a given threshold.
   double jedi_k(const TreeIndex& t1, const TreeIndex& t2, const double threshold);
 
+  /// Structure to hold computed bounds for edit distance.
+  struct BoundsResult {
+    /// Upper bound (for_int_del_ub) at root level.
+    double upper_bound;
+    /// Lower bound (ed_lb) at root level.
+    double lower_bound;
+    /// Hungarian algorithm row-based lower bound.
+    double hungarian_row_lb;
+    /// Hungarian algorithm column-based lower bound.
+    double hungarian_col_lb;
+  };
+
+  /// Computes upper and lower bounds for the edit distance between two trees
+  /// without performing expensive operations (Hungarian algorithm, full edit distance).
+  /**
+   * \param t1 Source tree.
+   * \param t2 Destination tree.
+   * \return BoundsResult containing computed bounds.
+   */
+  BoundsResult compute_bounds(const TreeIndex& t1, const TreeIndex& t2);
+
 public:
   /// Number of skipped bipartite matchings.
   unsigned long nr_of_skips_;
